@@ -42,12 +42,36 @@ def convert_dates(j):
     return created, modified
 
 
+def deduce_country_from_timezone(tz):
+    mapping = {
+        "Europe/Belgrade": "Serbia",
+        "America/New_York": "United States",
+        "America/Los_Angeles": "United States",
+        "Europe/London": "United Kingdom",
+        "Europe/Paris": "France",
+        "Europe/Berlin": "Germany",
+        "Asia/Tokyo": "Japan",
+        "Asia/Shanghai": "China",
+        "Asia/Kolkata": "India",
+        "Australia/Sydney": "Australia",
+        "Africa/Johannesburg": "South Africa",
+        "America/Sao_Paulo": "Brazil",
+        "UTC": ""
+    }
+    return mapping.get(tz, "")
+
+
 def convert_location(j):
     lat = j.get("lat")
     lon = j.get("lon")
     address = j.get("address", "")
+    timezone_name = j.get("timezone", "")
+    place = j.get("weather", {}).get("place", "")
+    country = deduce_country_from_timezone(timezone_name)
+
     if lat is None or lon is None or lat > 1e6:
         return None
+
     return {
         "region": {
             "center": {
@@ -59,10 +83,10 @@ def convert_location(j):
         "latitude": lat,
         "longitude": lon,
         "placeName": address,
-        "localityName": "",
+        "localityName": place,
         "administrativeArea": "",
-        "country": "Serbia",
-        "timeZoneName": j.get("timezone", "Europe/Belgrade")
+        "country": country,
+        "timeZoneName": timezone_name
     }
 
 
@@ -130,7 +154,7 @@ def journey_to_dayone_entry(j, media_dir):
         "starred": j.get("favourite", False),
         "creationDevice": "Imported from Journey",
         "creationDeviceType": "Other",
-        "timeZone": j.get("timezone", "Europe/Belgrade"),
+        "timeZone": j.get("timezone", "UTC"),
         "isPinned": False,
         "isAllDay": False,
         "duration": 0,

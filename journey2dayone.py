@@ -31,11 +31,18 @@ def strip_html(src: str) -> str:
         return ""
     md = convert_to_markdown(raw).strip()
 
-    md = re.sub(r"\n{3}", "\n", md)
-    md = re.sub(r"^\* ", r"- ", md, flags=re.MULTILINE) # use "-" bullets
-    md = re.sub(r"(?m)^\\([#*\-+>`])", r"\1", md)       # un-escape at BOL
-    md = re.sub(r"\\([.\-*_])", r"\1", md)              # 🔸 un-escape \. \- \* \_
-    md = re.sub(r"\*\\\*(.*?)\\\*\*", r"**\1**", md)    # 🔸 fix “*\*bold\*\*”
+    # --- tidy escape sequences ------------------------------------------
+    md = re.sub(r"\n{2,3}", "\n", md)                    # collapse blank lines
+    md = re.sub(r"^\* ",  "- ", md, flags=re.MULTILINE) # use "-" bullets
+
+    # 1. un-escape bullets / headers only at BOL
+    md = re.sub(r"(?m)^\\([#*\-+>`])", r"\1", md)
+
+    # 2. un-escape ordinary inline punctuation
+    md = re.sub(r"\\([.\-+!*_])", r"\1", md)            # now includes “+” and “!”
+
+    # 3. re-fix bold that the previous step broke:  *\*text\*  ->  **text**
+    md = re.sub(r"\*\\\*(.*?)\\\*\*", r"**\1**", md)
     
     return md
 

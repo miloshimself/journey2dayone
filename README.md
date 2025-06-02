@@ -17,9 +17,6 @@ A command‑line utility that losslessly migrates your **[Journey](https://journ
 |-------------|-----------------|
 | Python      | 3.9 + (tested 3.11) |
 | FFmpeg      | Built **with `libfdk_aac`** support – not enabled in Homebrew’s default bottle |
-| Pillow      | `pip install pillow` |
-| Mutagen     | `pip install mutagen` |
-| html‑to‑markdown | `pip install html-to-markdown` |
 
 ### Why a custom FFmpeg build?
 
@@ -68,10 +65,10 @@ ffmpeg -version
 ## 3. Installation
 
 ```bash
-git clone https://github.com/miloshimself/journey2dayone
+git clone https://github.com/miloshimself/journey2dayone.git
 cd journey2dayone
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+python3 -m venv .venv && source .venv/bin/activate
+pip3 install -r requirements.txt
 ```
 
 ---

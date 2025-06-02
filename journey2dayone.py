@@ -7,11 +7,11 @@ Journey-to-Day One converter
  • MD5 hash stored in entry JSON so Day One finds the asset.
 """
 
-import os, json, uuid, shutil, hashlib, re, html, zipfile, subprocess, tempfile, re
+import os, json, uuid, shutil, hashlib, re, html, zipfile, subprocess, tempfile, re, pytz
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from html_to_markdown import convert_to_markdown
-
+from pytz import country_timezones, country_names
 from PIL import Image
 from mutagen._file import File as MutagenFile
 
@@ -22,6 +22,20 @@ PHOTOS_DIR        = os.path.join(DAYONE_OUTPUT_DIR, "photos")
 AUDIOS_DIR        = os.path.join(DAYONE_OUTPUT_DIR, "audios")
 DAYONE_JSON_PATH  = os.path.join(DAYONE_OUTPUT_DIR, "Journey.json")
 
+
+# --- build a global “timezone → country” dict once --------------------------
+_TZ2COUNTRY: dict[str, str] = {}
+for cc, tz_list in country_timezones.items():
+    cname = country_names.get(cc, cc)          # e.g.  "RS" → "Serbia"
+    for tz in tz_list:
+        _TZ2COUNTRY[tz] = cname
+
+
+def tz_to_country(tz: str | None) -> str | None:
+    """'Europe/Belgrade' → 'Serbia'  |  None when unknown."""
+    if not tz:
+        return None
+    return _TZ2COUNTRY.get(tz)
 
 # ─── markdown from Journey HTML ──────────────────────────────────────────────
 def strip_html(src: str) -> str:
@@ -343,19 +357,34 @@ def journey_to_dayone_entry(j):
     return entry
 
 
-def convert_location(j):
+def convert_location(j: dict) -> dict | None:
+    """
+    Build Day One-style location block.
+
+    * latitude / longitude come from Journey
+    * time-zone is preserved exactly
+    * country is looked-up from the TZ database
+    """
     lat, lon = j.get("lat"), j.get("lon")
+    tz_raw       = j.get("timezone") or j.get("timeZone")     # Journey uses both keys
     if lat is None or lon is None or lat > 1e6:
         return None
+
+    # JSON-safe escape → "Europe/Belgrade"  →  "Europe\/Belgrade"
+    tz_json = (tz_raw or "UTC").replace("/", r"\/")
+
     return {
-        "region": {"center": {"latitude": lat, "longitude": lon}, "radius": 75},
-        "latitude": lat,
-        "longitude": lon,
-        "placeName": j.get("address", ""),
-        "localityName": j.get("weather", {}).get("place", ""),
-        "administrativeArea": "Central Serbia",
-        "country": "Serbia",
-        "timeZoneName": "Europe/Belgrade",
+        "region": {
+            "center": {"latitude": lat, "longitude": lon},
+            "radius": 75
+        },
+        "latitude":       lat,
+        "longitude":      lon,
+        "timeZoneName":   tz_json,
+        "country":        tz_to_country(tz_raw) or "Unknown",
+        "placeName":      j.get("address", ""),
+        "localityName":   j.get("weather", {}).get("place", ""),
+        "administrativeArea": j.get("address", "").split(",")[-1].strip() if j.get("address") else "",
     }
 
 

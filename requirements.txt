@@ -4,6 +4,7 @@ html2text==2025.4.15
 markdownify==1.1.0
 mutagen==1.47.0
 pillow==11.2.1
+pytz==2025.2
 six==1.17.0
 soupsieve==2.7
 typing_extensions==4.13.2

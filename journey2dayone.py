@@ -2,13 +2,16 @@ import os
 import json
 import uuid
 import shutil
+import hashlib
 from datetime import datetime, timezone
+from PIL import Image
+from mutagen._file import File as MutagenFile
 
 JOURNEY_INPUT_DIR = "journey_exports"
 DAYONE_OUTPUT_DIR = "dayone_export"
 PHOTOS_DIR = os.path.join(DAYONE_OUTPUT_DIR, "photos")
 AUDIOS_DIR = os.path.join(DAYONE_OUTPUT_DIR, "audios")
-DAYONE_JSON_PATH = os.path.join(DAYONE_OUTPUT_DIR, "Personal.json")
+DAYONE_JSON_PATH = os.path.join(DAYONE_OUTPUT_DIR, "Journey.json")
 
 
 def ensure_dirs():
@@ -42,32 +45,11 @@ def convert_dates(j):
     return created, modified
 
 
-def deduce_country_from_timezone(tz):
-    mapping = {
-        "Europe/Belgrade": "Serbia",
-        "America/New_York": "United States",
-        "America/Los_Angeles": "United States",
-        "Europe/London": "United Kingdom",
-        "Europe/Paris": "France",
-        "Europe/Berlin": "Germany",
-        "Asia/Tokyo": "Japan",
-        "Asia/Shanghai": "China",
-        "Asia/Kolkata": "India",
-        "Australia/Sydney": "Australia",
-        "Africa/Johannesburg": "South Africa",
-        "America/Sao_Paulo": "Brazil",
-        "UTC": ""
-    }
-    return mapping.get(tz, "")
-
-
 def convert_location(j):
     lat = j.get("lat")
     lon = j.get("lon")
     address = j.get("address", "")
-    timezone_name = j.get("timezone", "")
     place = j.get("weather", {}).get("place", "")
-    country = deduce_country_from_timezone(timezone_name)
 
     if lat is None or lon is None or lat > 1e6:
         return None
@@ -84,9 +66,9 @@ def convert_location(j):
         "longitude": lon,
         "placeName": address,
         "localityName": place,
-        "administrativeArea": "",
-        "country": country,
-        "timeZoneName": timezone_name
+        "administrativeArea": "Central Serbia",
+        "country": "Serbia",
+        "timeZoneName": "Europe/Belgrade"
     }
 
 
@@ -106,33 +88,99 @@ def convert_tags(j):
     return j.get("tags", [])
 
 
-def convert_media(j, media_dir):
+def get_md5(file_path):
+    hash_md5 = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
+
+
+def get_audio_metadata(file_path):
+    try:
+        audio = MutagenFile(file_path)
+        duration = audio.info.length if audio and audio.info else 0
+        sample_rate = f"{round(audio.info.sample_rate / 1000, 1)} kHz" if audio and audio.info else "Unknown"
+        return duration, sample_rate
+    except Exception:
+        return 0, "Unknown"
+
+
+def convert_media_enhanced_with_audio(j, media_dir, creation_date_iso, location):
     media_list = j.get("photos", [])
     photo_entries = []
     audio_entries = []
 
-    for item in media_list:
+    for idx, item in enumerate(media_list):
         fname = os.path.basename(item) if isinstance(item, str) else None
         if not fname:
             continue
 
-        ext = os.path.splitext(fname)[1].lower()
+        ext = os.path.splitext(fname)[1].lower().strip(".")
         src = os.path.join(media_dir, fname)
 
         if not os.path.exists(src):
             continue
 
         identifier = os.path.splitext(fname)[0]
+        file_size = os.path.getsize(src)
+        md5_hash = get_md5(src)
 
-        if ext in [".jpg", ".jpeg", ".png"]:
+        if ext in ["jpg", "jpeg", "png"]:
+            try:
+                with Image.open(src) as img:
+                    width, height = img.size
+            except Exception:
+                width, height = 0, 0
+
             dst = os.path.join(PHOTOS_DIR, fname)
             shutil.copy2(src, dst)
-            photo_entries.append({"identifier": identifier, "type": "photo"})
 
-        elif ext in [".m4a", ".aac", ".mp3"]:
+            photo_entry = {
+                "fileSize": file_size,
+                "orderInEntry": idx + 1,
+                "creationDevice": "Miloš’s MacBook Pro",
+                "duration": 0,
+                "favorite": False,
+                "type": ext,
+                "identifier": identifier,
+                "date": creation_date_iso,
+                "exposureBiasValue": 0,
+                "height": height,
+                "width": width,
+                "md5": md5_hash,
+                "isSketch": False
+            }
+            photo_entries.append(photo_entry)
+
+        elif ext in ["m4a", "aac", "mp3"]:
+            duration, sample_rate = get_audio_metadata(src)
+
             dst = os.path.join(AUDIOS_DIR, fname)
             shutil.copy2(src, dst)
-            audio_entries.append({"identifier": identifier, "type": "audio"})
+
+            audio_entry = {
+                "fileSize": file_size,
+                "orderInEntry": idx,
+                "recordingDevice": "iPhone Microphone",
+                "creationDevice": "Miloš’s iPhone",
+                "audioChannels": "Mono",
+                "duration": duration,
+                "favorite": False,
+                "identifier": identifier,
+                "format": ext,
+                "date": creation_date_iso,
+                "height": 0,
+                "width": 0,
+                "md5": md5_hash,
+                "sampleRate": sample_rate,
+                "timeZoneName": "Europe/Belgrade"
+            }
+
+            if location:
+                audio_entry["location"] = location
+
+            audio_entries.append(audio_entry)
 
     return photo_entries, audio_entries
 
@@ -150,11 +198,14 @@ def journey_to_dayone_entry(j, media_dir):
         "creationDate": created,
         "modifiedDate": modified,
         "text": text,
-        "richText": json.dumps(rich_text),
+        "richText": rich_text,
         "starred": j.get("favourite", False),
-        "creationDevice": "Imported from Journey",
-        "creationDeviceType": "Other",
-        "timeZone": j.get("timezone", "UTC"),
+        "creationDevice": "Miloš’s MacBook Pro",
+        "creationDeviceType": "MacBook Pro",
+        "creationOSVersion": "15.5",
+        "creationDeviceModel": "Mac16,7",
+        "creationOSName": "macOS",
+        "timeZone": "Europe/Belgrade",
         "isPinned": False,
         "isAllDay": False,
         "duration": 0,
@@ -166,8 +217,7 @@ def journey_to_dayone_entry(j, media_dir):
     if weather:
         entry["weather"] = weather
 
-    # Media (from 'photos' list in Journey)
-    photo_entries, audio_entries = convert_media(j, media_dir)
+    photo_entries, audio_entries = convert_media_enhanced_with_audio(j, media_dir, created, location)
     if photo_entries:
         entry["photos"] = photo_entries
     if audio_entries:

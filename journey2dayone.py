@@ -7,9 +7,10 @@ Journey-to-Day One converter
  • MD5 hash stored in entry JSON so Day One finds the asset.
 """
 
-import os, json, uuid, shutil, hashlib, re, html, zipfile, subprocess, tempfile
+import os, json, uuid, shutil, hashlib, re, html, zipfile, subprocess, tempfile, re
 from datetime import datetime, timezone
 from html.parser import HTMLParser
+from html_to_markdown import convert_to_markdown
 
 from PIL import Image
 from mutagen._file import File as MutagenFile
@@ -21,28 +22,122 @@ PHOTOS_DIR        = os.path.join(DAYONE_OUTPUT_DIR, "photos")
 AUDIOS_DIR        = os.path.join(DAYONE_OUTPUT_DIR, "audios")
 DAYONE_JSON_PATH  = os.path.join(DAYONE_OUTPUT_DIR, "Journey.json")
 
-# ─── helpers ──────────────────────────────────────────────────────────────
-class _Stripper(HTMLParser):
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self._out: list[str] = []
 
-    def handle_starttag(self, tag, _attrs):
-        if tag in {"br", "p", "div", "li"}:
-            self._out.append("\n")
-
-    def handle_data(self, data):           # strip all tags, keep text
-        self._out.append(data)
-
-    def get(self) -> str:
-        return re.sub(r"\n{3,}", "\n\n", "".join(self._out)).strip()
-
-
+# ─── markdown from Journey HTML ──────────────────────────────────────────────
 def strip_html(src: str) -> str:
-    p = _Stripper()
-    p.feed(src or "")
-    return p.get()
+    """Journey’s HTML → Markdown with tidy spacing & ‘-’ bullets."""
+    raw = html.unescape(src or "")
+    if not raw.strip():
+        return ""
+    md = convert_to_markdown(raw).strip()
 
+    md = re.sub(r"\n{2,}", "\n", md)                    # collapse blank lines
+    md = re.sub(r"^\* ", r"- ", md, flags=re.MULTILINE) # use "-" bullets
+    md = re.sub(r"(?m)^\\([#*\-+>`])", r"\1", md)       # un-escape at BOL
+    md = re.sub(r"\\([.\-*_])", r"\1", md)              # 🔸 un-escape \. \- \* \_
+    md = re.sub(r"\*\\\*(.*?)\\\*\*", r"**\1**", md)    # 🔸 fix “*\*bold\*\*”
+    
+    return md
+
+
+# ─── rich-text + plain builder ───────────────────────────────────────────────
+_hdr_re = re.compile(r'^(#{1,6})\s*(.*)$')          # 1–6 leading # → header 1-6
+
+def _markdown_to_dayone_contents(markdown: str) -> list[dict]:
+    """
+    Turn the Markdown we already produced from Journey’s HTML into Day One
+    `richText.contents` — with **native** bullets and numbered lists.
+
+    Rules
+    -----
+    •  “# …” → header (level = #-count)
+    •  “- …”, “* …”, “+ …”  → bulleted list
+    •  “1. …”, “1) …” etc   → numbered list (listIndex is the literal number)
+    •   Leading spaces define nesting depth (2 spaces = one indentLevel)
+    """
+    contents: list[dict] = []
+
+    for raw in markdown.splitlines(keepends=True):
+
+        # ---------- headers -------------------------------------------------
+        m = _hdr_re.match(raw)
+        if m:
+            level = len(m.group(1))
+            text  = m.group(2) + ("\n" if raw.endswith("\n") else "")
+            contents.append({
+                "attributes": {
+                    "line": {
+                        "header": level,
+                        "identifier": uuid.uuid4().hex.upper()
+                    }
+                },
+                "text": text,
+            })
+            continue
+
+        # ---------- unordered bullets ---------------------------------------
+        m = re.match(r'^(\s*)[*\-+]\s+(.*)', raw)
+        if m:
+            indent_spaces = len(m.group(1))
+            indent_level  = indent_spaces // 2 + 1        # every 2 spaces = +1
+            contents.append({
+                "attributes": {
+                    "line": {
+                        "listStyle": "bulleted",
+                        "indentLevel": indent_level,
+                        "identifier": uuid.uuid4().hex.upper()
+                    }
+                },
+                "text": m.group(2) + ("\n" if raw.endswith("\n") else ""),
+            })
+            continue
+
+        # ---------- numbered bullets ----------------------------------------
+        m = re.match(r'^(\s*)(\d+)[\.\)]\s+(.*)', raw)
+        if m:
+            indent_spaces = len(m.group(1))
+            indent_level  = indent_spaces // 2 + 1
+            list_index    = int(m.group(2))
+            contents.append({
+                "attributes": {
+                    "line": {
+                        "listStyle": "numbered",
+                        "indentLevel": indent_level,
+                        "listIndex":   list_index,
+                        "identifier":  uuid.uuid4().hex.upper()
+                    }
+                },
+                "text": m.group(3) + ("\n" if raw.endswith("\n") else ""),
+            })
+            continue
+
+        # ---------- plain line ----------------------------------------------
+        contents.append({"text": raw})
+
+    return contents
+
+
+def build_rich_and_plain(markdown: str, photos, audios):
+    # -------- richText -------------------------------------------------------
+    contents = _markdown_to_dayone_contents(markdown)
+    for p in photos:
+        contents.append({"embeddedObjects": [{"identifier": p["identifier"], "type": "photo"}]})
+    for a in audios:
+        contents.append({"embeddedObjects": [{"identifier": a["identifier"], "type": "audio"}]})
+
+    rich = json.dumps(
+        {"contents": contents,
+         "meta": {"created": {"platform": "com.bloombuilt.dayone-mac", "version": 1667},
+                  "small-lines-removed": True, "version": 1}},
+        ensure_ascii=False
+    )
+
+    # -------- plain Markdown -------------------------------------------------
+    blocks = [markdown] if markdown else []
+    blocks += [f"![](dayone-moment://{p['identifier']})" for p in photos]
+    blocks += [f"![](dayone-moment:/audio/{a['identifier']})" for a in audios]
+
+    return rich, "\n".join(blocks)        # ← single newline separator
 
 def ensure_dirs() -> None:
     os.makedirs(PHOTOS_DIR, exist_ok=True)
@@ -122,34 +217,6 @@ def save_media(src: str, dest_dir: str, ext: str, is_mp3: bool):
         os.remove(src_for_hash)  # temp file no longer needed
 
     return uuid.uuid4().hex.upper(), md5_hex, dst, ext
-
-
-# ─── rich-text + plain builder ───────────────────────────────────────────────
-def build_rich_and_plain(original_text: str, photos, audios):
-    contents, plain = [], []
-    if original_text:
-        contents.append({"text": original_text})
-        plain.append(original_text)
-
-    for p in photos:
-        pid = p["identifier"]
-        contents.append({"embeddedObjects": [{"identifier": pid, "type": "photo"}]})
-        plain.append(f"![](dayone-moment://{pid})")
-
-    for a in audios:
-        aid = a["identifier"]
-        contents.append({"embeddedObjects": [{"identifier": aid, "type": "audio"}]})
-        plain.append(f"![](dayone-moment:/audio/{aid})")
-
-    rich = {
-        "contents": contents,
-        "meta": {
-            "created": {"platform": "com.bloombuilt.dayone-mac", "version": 1667},
-            "small-lines-removed": True,
-            "version": 1,
-        },
-    }
-    return json.dumps(rich, ensure_ascii=False), "\n\n".join(plain) + "\n"
 
 
 # ─── convert photos + audios ────────────────────────────────────────────────
@@ -324,11 +391,11 @@ def main():
     with open(DAYONE_JSON_PATH, "w", encoding="utf-8") as fh:
         json.dump({"metadata": {"version": "1.0"}, "entries": entries}, fh, ensure_ascii=False, indent=2)
 
-    print(f"✅  Exported {len(entries)} entries → {DAYONE_JSON_PATH}")
+    print(f"Exported {len(entries)} entries → {DAYONE_JSON_PATH}")
 
     zip_target = os.path.join(os.path.dirname(DAYONE_OUTPUT_DIR), "Journey.dayone.zip")
     build_import_zip(DAYONE_OUTPUT_DIR, zip_target)
-    print(f"📦  Packed Day One import → {zip_target}")
+    print(f"Packed Day One import → {zip_target}")
 
 
 if __name__ == "__main__":

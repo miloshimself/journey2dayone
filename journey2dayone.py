@@ -419,7 +419,7 @@ def main():
                 journey = json.load(fh)
                 entries.append(journey_to_dayone_entry(journey))
             except Exception as e:
-                print(f"⚠️  {fn}: {e}")
+                print(f"{fn}: {e}")
 
     with open(DAYONE_JSON_PATH, "w", encoding="utf-8") as fh:
         json.dump({"metadata": {"version": "1.0"}, "entries": entries}, fh, ensure_ascii=False, indent=2)

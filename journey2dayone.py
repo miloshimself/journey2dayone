@@ -31,7 +31,7 @@ def strip_html(src: str) -> str:
         return ""
     md = convert_to_markdown(raw).strip()
 
-    md = re.sub(r"\n{2,}", "\n", md)                    # collapse blank lines
+    md = re.sub(r"\n{3}", "\n", md)
     md = re.sub(r"^\* ", r"- ", md, flags=re.MULTILINE) # use "-" bullets
     md = re.sub(r"(?m)^\\([#*\-+>`])", r"\1", md)       # un-escape at BOL
     md = re.sub(r"\\([.\-*_])", r"\1", md)              # 🔸 un-escape \. \- \* \_

@@ -76,9 +76,17 @@ pip install -r requirements.txt    # installs Pillow, mutagen, html-to-markdown
 `requirements.txt`
 
 ```
-Pillow>=10.0
-mutagen>=1.47
-html-to-markdown>=0.2
+beautifulsoup4==4.13.4
+html-to-markdown==1.3.2
+html2text==2025.4.15
+markdownify==1.1.0
+mutagen==1.47.0
+pillow==11.2.1
+pytz==2025.2
+six==1.17.0
+soupsieve==2.7
+typing_extensions==4.13.2
+tzlocal==5.3.1
 ```
 
 ---

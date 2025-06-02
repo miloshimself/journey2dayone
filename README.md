@@ -68,10 +68,10 @@ ffmpeg -version
 ## 3. Installation
 
 ```bash
-git clone https://github.com/your‑username/journey‑dayone.git
-cd journey‑dayone
+git clone https://github.com/miloshimself/journey2dayone
+cd journey2dayone
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt   # pillow mutagen html-to-markdown
+pip install -r requirements.txt
 ```
 
 ---
@@ -79,20 +79,21 @@ pip install -r requirements.txt   # pillow mutagen html-to-markdown
 ## 4. Usage
 
 1. **Export from Journey**  
-   `Journey ➜ Settings ➜ Backup ➜ Export to JSON (including photos & audio)`  
-   Place all exported `.json` files and their `photos/` + `audio/` folders in `journey_exports/`.
+   `Journey ➜ Settings ➜ Preferences ➜ Account, Data & Cloud Services ➜ <Your Account> ➜ Export/Backup`
+   Select the date range, and enable "Download High Quality Photos".  
+   Place all exported files (.json, photo and audio) in `journey_exports/`.
 
 2. **Run the converter**
 
    ```bash
-   python convert.py
+   python3 journey2dayone.py
    ```
 
    * A Day One–ready folder `dayone_export/` is created.  
    * It is automatically zipped as `Journey.dayone.zip`.
 
 3. **Import into Day One**  
-   *macOS / iOS* → File ➜ Import ➜ Day One ZIP → select the generated archive.
+   *macOS / iOS* → File ➜ Import ➜ JSON ZIP File → select the generated archive.
 
 ---
 
@@ -111,7 +112,7 @@ pip install -r requirements.txt   # pillow mutagen html-to-markdown
 
 ## 6. Limitations
 
-* Only `.jpg / .jpeg / .png` images and `.mp3 / .m4a / .aac / .wav` audio are processed  
+* Only `.jpg / .jpeg / .png` images and `.mp3 / .m4a / .aac / .wav` audio are processed, though easily extended.
 * Journey entries without `lat`/`lon` are imported without location  
 * Time‑zone‑to‑country resolution relies on the included IANA ↔ ISO 3166 map
 

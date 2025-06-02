@@ -340,7 +340,6 @@ def journey_to_dayone_entry(j):
         "creationOSVersion": "15.5",
         "creationDeviceModel": "Mac16,7",
         "creationOSName": "macOS",
-        "timeZone": "Europe/Belgrade",
         "isPinned": False,
         "isAllDay": False,
         "duration": 0,
@@ -366,12 +365,9 @@ def convert_location(j: dict) -> dict | None:
     * country is looked-up from the TZ database
     """
     lat, lon = j.get("lat"), j.get("lon")
-    tz_raw       = j.get("timezone") or j.get("timeZone")     # Journey uses both keys
+    tz       = j.get("timezone") or j.get("timeZone") or "UTC"    # Journey uses both keys
     if lat is None or lon is None or lat > 1e6:
         return None
-
-    # JSON-safe escape → "Europe/Belgrade"  →  "Europe\/Belgrade"
-    tz_json = (tz_raw or "UTC").replace("/", r"\/")
 
     return {
         "region": {
@@ -380,8 +376,9 @@ def convert_location(j: dict) -> dict | None:
         },
         "latitude":       lat,
         "longitude":      lon,
-        "timeZoneName":   tz_json,
-        "country":        tz_to_country(tz_raw) or "Unknown",
+        "timeZoneName":   tz,
+        "timeZone":       tz,
+        "country":        tz_to_country(tz) or "Unknown",
         "placeName":      j.get("address", ""),
         "localityName":   j.get("weather", {}).get("place", ""),
         "administrativeArea": j.get("address", "").split(",")[-1].strip() if j.get("address") else "",

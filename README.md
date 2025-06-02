@@ -1,179 +1,122 @@
-# Journey → Day One Converter
 
-This repository contains a single‑purpose Python script that converts an **export
-from the Journey journaling application** into a Day One import archive
-(`Journey.dayone.zip`).
+# Journey ➜ Day One Converter
 
-It preserves every major feature that is available in Journey exports:
+A command‑line utility that losslessly migrates your **[Journey](https://journey.cloud)** diary export (_JSON + media_) into a ready‑to‑import **Day One** archive.
 
-| Feature                       | Supported | Notes |
-| ----------------------------- | :-------: | ----- |
-| Text (rich & plain)           | ✅        | Journey’s HTML is converted to Markdown and Day One *richText*. |
-| Photos                        | ✅        | Copied losslessly, renamed to their MD5 sum so Day One can locate them. |
-| Audio recordings              | ✅        | MP3 files are trans‑encoded to high‑quality AAC / M4A; existing AAC / WAV are copied. |
-| Weather, location, tags       | ✅        | Directly mapped. |
-| Nested and numbered lists     | ✅        | Re‑encoded using Day One’s native list attributes. |
+* Photos are copied bit‑for‑bit and renamed to their MD5 hash  
+* MP3 voice notes are transcoded to **AAC (.m4a)** using `libfdk_aac` at 320 kb/s CBR  
+* Existing `.m4a / .aac / .wav` recordings are preserved as‑is  
+* Rich‑text (headers, bulleted / numbered lists, bold, inline code) is rebuilt as native Day One `richText`  
+* Location, weather and tags are transferred when present  
 
 ---
 
-## 1.  Requirements
+## 1. Prerequisites
 
-| Component | Purpose | Minimum Version |
-| --------- | ------- | --------------- |
-| **Python** | Running the converter | 3.10 |
-| **pip** | Installing Python deps | latest |
-| **ffmpeg** | Audio transcoding (MP3 → AAC) | 5.0 |
+| Requirement | Version / Notes |
+|-------------|-----------------|
+| Python      | 3.9 + (tested 3.11) |
+| FFmpeg      | Built **with `libfdk_aac`** support – not enabled in Homebrew’s default bottle |
+| Pillow      | `pip install pillow` |
+| Mutagen     | `pip install mutagen` |
+| html‑to‑markdown | `pip install html-to-markdown` |
 
-### libfdk\_aac encoder
+### Why a custom FFmpeg build?
 
-Day One stores audio in **AAC / M4A**.  
-To avoid a second generation of loss when Journey recordings are already lossy
-MP3, the script re‑encodes them **once** using the high‑quality `libfdk_aac`
-encoder at 320 kbps CBR.
+`libfdk_aac` is **GPL/Non‑Free** and therefore excluded from the stock Homebrew build.  
+The converter uses it to transcode Journey’s MP3 voice notes to high‑quality AAC so that Day One can play them inline.
 
-Because `libfdk_aac` is distributed under the *Fraunhofer FDK* license,
-**ffmpeg is not compiled with it by default on most platforms**.
+Follow the build script below to compile FFmpeg with all needed codecs.
 
-#### macOS (Homebrew)
+---
 
-```bash
-# remove the pre‑built keg to avoid a naming conflict
-brew uninstall --ignore-dependencies ffmpeg
+## 2. FFmpeg build for Apple Silicon
 
-# tap the community formulae that allow non‑free options
-brew tap homebrew-ffmpeg/ffmpeg
-
-# build ffmpeg with libfdk_aac enabled
-brew install ffmpeg --with-fdk-aac --enable-nonfree
-```
-
-#### Linux (from source)
+Save as `build-ffmpeg.sh`, `chmod +x`, then `./build-ffmpeg.sh`.
 
 ```bash
-sudo apt-get remove ffmpeg         # remove distro build
-sudo apt-get install autoconf automake build-essential libtool pkg-config                          libmp3lame-dev libopus-dev libvorbis-dev
+#!/bin/bash
+set -e
 
-git clone https://github.com/mstorsjo/fdk-aac.git && cd fdk-aac
-autoreconf -fiv && ./configure --disable-shared && make -j$(nproc)
-sudo make install && cd ..
+# ---------- dependencies -------------------------------------------------
+brew install automake autoconf libtool pkg-config texi2html wget              fdk-aac lame x264 x265 libvpx opus xvid nasm
 
-git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg && cd ffmpeg
-./configure --enable-gpl --enable-nonfree --enable-libfdk_aac             --enable-libmp3lame --enable-libopus
-make -j$(nproc)
+# ---------- FFmpeg source ------------------------------------------------
+mkdir -p ~/ffmpeg-build && cd ~/ffmpeg-build
+git clone https://github.com/ffmpeg/ffmpeg.git || true
+cd ffmpeg && git pull
+
+export PKG_CONFIG_PATH="/opt/homebrew/opt/fdk-aac/lib/pkgconfig:/opt/homebrew/opt/lame/lib/pkgconfig:/opt/homebrew/opt/opus/lib/pkgconfig:/opt/homebrew/opt/libvpx/lib/pkgconfig:/opt/homebrew/opt/xvid/lib/pkgconfig"
+
+export LDFLAGS="-L/opt/homebrew/opt/fdk-aac/lib -L/opt/homebrew/opt/lame/lib -L/opt/homebrew/opt/opus/lib -L/opt/homebrew/opt/libvpx/lib -L/opt/homebrew/opt/xvid/lib"
+
+export CPPFLAGS="-I/opt/homebrew/opt/fdk-aac/include -I/opt/homebrew/opt/lame/include -I/opt/homebrew/opt/opus/include -I/opt/homebrew/opt/libvpx/include -I/opt/homebrew/opt/xvid/include"
+
+./configure --prefix=/usr/local --enable-gpl --enable-nonfree             --enable-libfdk_aac --enable-libmp3lame --enable-libopus             --enable-libvpx --enable-libx264 --enable-libx265 --enable-libxvid
+
+make -j$(sysctl -n hw.ncpu)
 sudo make install
+ffmpeg -version
 ```
+
+> **Note**  
+> Paths use `/opt/homebrew` (Apple Silicon).  
+> Replace with `/usr/local` on Intel Macs or adapt for Linux.
 
 ---
 
-## 2.  Installation
+## 3. Installation
 
 ```bash
-python -m venv venv
-source venv/bin/activate           # Windows: venv\Scripts\activate
-pip install -r requirements.txt    # installs Pillow, mutagen, html-to-markdown
-```
-
-`requirements.txt`
-
-```
-beautifulsoup4==4.13.4
-html-to-markdown==1.3.2
-html2text==2025.4.15
-markdownify==1.1.0
-mutagen==1.47.0
-pillow==11.2.1
-pytz==2025.2
-six==1.17.0
-soupsieve==2.7
-typing_extensions==4.13.2
-tzlocal==5.3.1
+git clone https://github.com/your‑username/journey‑dayone.git
+cd journey‑dayone
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt   # pillow mutagen html-to-markdown
 ```
 
 ---
 
-## 3.  Preparing the source data
+## 4. Usage
 
-1. In **Journey ➜ Settings ➜ Export**, choose **JSON**.  
-   The export is a folder that contains one `.json` file per entry and a copy
-   of every attached photo / audio file.
+1. **Export from Journey**  
+   `Journey ➜ Settings ➜ Backup ➜ Export to JSON (including photos & audio)`  
+   Place all exported `.json` files and their `photos/` + `audio/` folders in `journey_exports/`.
 
-2. Place that folder (or its contents) into `journey_exports/`  
-   (the default expected by the script).  
-   The final directory structure should look like:
+2. **Run the converter**
 
-```
-journey_exports/
-├── 1522482448669-3fc298412714b3e4.json
-├── 1522482448669-3fc298412714b3e4.jpg
-├── ...
-```
+   ```bash
+   python convert.py
+   ```
 
----
+   * A Day One–ready folder `dayone_export/` is created.  
+   * It is automatically zipped as `Journey.dayone.zip`.
 
-## 4.  Running the converter
-
-```bash
-python journey_to_dayone.py
-```
-
-* On completion you will see something like:  
-
-  ```
-  Exported 182 entries → dayone_export/Journey.json
-  Packed Day One import → Journey.dayone.zip
-  ```
-
-* `dayone_export/` is a fully‑formed Day One bundle (unzipped).  
-  The script additionally packs it into `Journey.dayone.zip` for convenience.
+3. **Import into Day One**  
+   *macOS / iOS* → File ➜ Import ➜ Day One ZIP → select the generated archive.
 
 ---
 
-## 5.  Import into Day One
+## 5. Field mapping
 
-1. **macOS** – *File ➜ Import ➜ From JSON…* and select `Journey.dayone.zip`.  
-2. **iOS** – share the ZIP to Day One, or copy it into iCloud Drive and import
-   the same way.
-
-All entries, photos, recordings, locations, weather, lists and Markdown
-formatting should appear exactly as they did in Journey.
-
----
-
-## 6.  Implementation details
-
-### Markdown normalisation (`strip_html`)
-* Journey stores the entry body as HTML.  
-  `html‑to‑markdown` converts it to Markdown.
-* Excess blank lines are collapsed and Journey’s `*` bullets are rewritten to
-  `-` solely for consistency.
-* Escaped punctuation introduced by Journey (`\#`, `\-`, `\+` …) is removed
-  except where required (e.g. literal backticks).
-
-### Day One richText synthesis
-* Each line is inspected for headers, bullets or ordered‑list prefixes.  
-  Matching lines receive a `line` attribute with the appropriate `header`,
-  `listStyle`, `indentLevel`, and – for numbered lists – `listIndex`.
-* Photos and audios are appended as `embeddedObjects`.
-
-### Media handling
-* **Photos** – copied byte‑for‑byte.  The destination filename is the file’s
-  MD5 hash plus its original extension (`.jpg` / `.png`).  That is the naming
-  convention used by Day One.
-* **Audio** –  
-  * If the source is already AAC (`.m4a` / `.aac`) or WAV, the file is copied.  
-  * If the source is MP3, it is re‑encoded to AAC/M4A using `libfdk_aac` at
-    320 kbps CBR to minimise further quality loss.
-
-### Entry metadata
-* Timestamps (`creationDate`, `modifiedDate`) are preserved and converted to
-  RFC‑3339.
-* Weather, GPS position, tags and favourites are mapped 1‑to‑1.
+| Journey field | Day One field |
+|---------------|--------------|
+| `text` (HTML) | `text` + `richText` (Markdown & native JSON) |
+| `photos[]`    | `photos[]` (metadata + MD5 filenames) |
+| `audios[]`    | `audios[]` (AAC) |
+| `lat` / `lon` | `location` |
+| `weather.*`   | `weather` |
+| `tags[]`      | `tags[]` |
 
 ---
 
-## 7.  License
+## 6. Limitations
 
-The converter script itself is released under the MIT License.  
-You are responsible for complying with the license terms of the Fraunhofer
-FDK AAC codec when building ffmpeg with `--enable-nonfree`.
+* Only `.jpg / .jpeg / .png` images and `.mp3 / .m4a / .aac / .wav` audio are processed  
+* Journey entries without `lat`/`lon` are imported without location  
+* Time‑zone‑to‑country resolution relies on the included IANA ↔ ISO 3166 map
 
+---
+
+## 7. License
+
+MIT.  Use at your own risk.  No affiliation with Journey Cloud or Day One.

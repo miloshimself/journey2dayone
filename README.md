@@ -1,7 +1,7 @@
 
 # Journey ➜ Day One Converter
 
-A command‑line utility that losslessly migrates your **[Journey](https://journey.cloud)** diary export (_JSON + media_) into a ready‑to‑import **Day One** archive.
+A command‑line utility that losslessly migrates your **[Journey](https://journey.cloud)** diary export (_JSON + media_) into a ready‑to‑import **[Day One](https://dayoneapp.com)** archive.
 
 * Photos are copied bit‑for‑bit and renamed to their MD5 hash  
 * MP3 voice notes are transcoded to **AAC (.m4a)** using `libfdk_aac` at 320 kb/s CBR  

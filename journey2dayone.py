@@ -6,30 +6,70 @@ import hashlib
 from datetime import datetime, timezone
 from PIL import Image
 from mutagen._file import File as MutagenFile
+import html
+import re
 
 JOURNEY_INPUT_DIR = "journey_exports"
 DAYONE_OUTPUT_DIR = "dayone_export"
 PHOTOS_DIR = os.path.join(DAYONE_OUTPUT_DIR, "photos")
 AUDIOS_DIR = os.path.join(DAYONE_OUTPUT_DIR, "audios")
 DAYONE_JSON_PATH = os.path.join(DAYONE_OUTPUT_DIR, "Journey.json")
+TAG_RE = re.compile(r"<[^>]+>")
 
+def strip_html(src: str) -> str:
+    """Remove HTML tags and collapse whitespace."""
+    out = TAG_RE.sub("", src)
+    # Day One likes normalized line-breaks
+    out = re.sub(r"\r\n|\r", "\n", out)
+    return out.strip()
+
+def build_rich_text_and_text(original_text, photos, audios):
+    original_text = strip_html(original_text or "")
+    contents   = []
+    plain_lines = []
+
+    if original_text:
+        contents.append({"text": original_text})
+        plain_lines.append(original_text)
+
+    for p in photos:
+        contents.append({"embeddedObjects":[{"identifier": p["identifier"], "type":"photo"}]})
+        plain_lines.append(f"![](dayone-moment://{p['identifier']})")
+
+    for a in audios:
+        contents.append({"embeddedObjects":[{"identifier": a["identifier"], "type":"audio"}]})
+        plain_lines.append(f"![](dayone-moment:/audio/{a['identifier']})")
+
+    rich_dict = {
+        "contents": contents,
+        "meta": {
+            "created": {"platform":"com.bloombuilt.dayone-mac","version":1667},
+            "small-lines-removed": True,
+            "version": 1
+        }
+    }
+    return json.dumps(rich_dict, ensure_ascii=False), "\n\n".join(plain_lines)
 
 def ensure_dirs():
     os.makedirs(PHOTOS_DIR, exist_ok=True)
     os.makedirs(AUDIOS_DIR, exist_ok=True)
 
 
-def convert_timestamp(ms):
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
+def convert_timestamp(ms: int) -> str:
+    """ms since epoch → RFC3339 with trailing Z (UTC)."""
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc) \
+                   .replace(tzinfo=None) \
+                   .isoformat(timespec="seconds") + "Z"
 
 
 def convert_text(j):
-    return j.get("text", "")
+    raw = html.unescape(j.get("text", ""))
+    return strip_html(raw)
 
 
 def convert_rich_text(j):
-    text = j.get("text", "")
-    return {
+    text = html.unescape(j.get("text", ""))
+    rich_text_data = {
         "contents": [{"text": text}],
         "meta": {
             "created": {"platform": "com.bloombuilt.dayone-mac", "version": 1667},
@@ -37,6 +77,7 @@ def convert_rich_text(j):
             "version": 1
         }
     }
+    return json.dumps(rich_text_data, ensure_ascii=False)
 
 
 def convert_dates(j):
@@ -99,87 +140,57 @@ def get_md5(file_path):
 def get_audio_metadata(file_path):
     try:
         audio = MutagenFile(file_path)
-        duration = audio.info.length if audio and audio.info else 0
-        sample_rate = f"{round(audio.info.sample_rate / 1000, 1)} kHz" if audio and audio.info else "Unknown"
-        return duration, sample_rate
+        if audio and audio.info:
+            duration = round(audio.info.length, 3)
+            sample_rate = f"{round(audio.info.sample_rate/1000,1)} kHz"
+            return duration, sample_rate
     except Exception:
-        return 0, "Unknown"
+        pass
+    # fallback
+    return None, None
 
 
-def convert_media_enhanced_with_audio(j, media_dir, creation_date_iso, location):
-    media_list = j.get("photos", [])
-    photo_entries = []
-    audio_entries = []
+def convert_media_enhanced_with_audio(j, media_dir, creation_iso, location):
+    photo_entries, audio_entries = [], []
 
-    for idx, item in enumerate(media_list):
-        fname = os.path.basename(item) if isinstance(item, str) else None
-        if not fname:
-            continue
-
-        ext = os.path.splitext(fname)[1].lower().strip(".")
+    for idx,item in enumerate(j.get("photos", [])):
+        fname = os.path.basename(item) if isinstance(item,str) else None
+        if not fname: continue
         src = os.path.join(media_dir, fname)
+        if not os.path.exists(src): continue
 
-        if not os.path.exists(src):
-            continue
+        ext = os.path.splitext(fname)[1].lower().lstrip(".")
+        identifier = uuid.uuid4().hex.upper()   # NEW unique ID
+        new_name   = f"{identifier}.{ext}"
+        dst_dir    = PHOTOS_DIR if ext in ["jpg","jpeg","png"] else AUDIOS_DIR
+        dst        = os.path.join(dst_dir, new_name)
+        shutil.copy2(src, dst)                  # copy under the new name
+        md5_hash   = get_md5(dst)
+        size       = os.path.getsize(dst)
 
-        identifier = os.path.splitext(fname)[0]
-        file_size = os.path.getsize(src)
-        md5_hash = get_md5(src)
-
-        if ext in ["jpg", "jpeg", "png"]:
-            try:
-                with Image.open(src) as img:
-                    width, height = img.size
-            except Exception:
-                width, height = 0, 0
-
-            dst = os.path.join(PHOTOS_DIR, fname)
-            shutil.copy2(src, dst)
-
-            photo_entry = {
-                "fileSize": file_size,
-                "orderInEntry": idx + 1,
-                "creationDevice": "Miloš’s MacBook Pro",
-                "duration": 0,
-                "favorite": False,
-                "type": ext,
-                "identifier": identifier,
-                "date": creation_date_iso,
-                "exposureBiasValue": 0,
-                "height": height,
-                "width": width,
-                "md5": md5_hash,
-                "isSketch": False
-            }
-            photo_entries.append(photo_entry)
-
-        elif ext in ["m4a", "aac", "mp3"]:
-            duration, sample_rate = get_audio_metadata(src)
-
-            dst = os.path.join(AUDIOS_DIR, fname)
-            shutil.copy2(src, dst)
-
+        if ext in ["jpg","jpeg","png"]:           # photo entry
+            try: w,h = Image.open(dst).size
+            except: w,h = 0,0
+            photo_entries.append({
+                "fileSize": size, "orderInEntry": idx+1,
+                "creationDevice": "Miloš’s MacBook Pro","duration":0,
+                "favorite": False,"type":ext,"identifier":identifier,
+                "date": creation_iso,"exposureBiasValue":0,
+                "height": h,"width": w,"md5": md5_hash,"isSketch": False
+            })
+        else:                                     # audio entry
+            duration,sample_rate = get_audio_metadata(dst)
             audio_entry = {
-                "fileSize": file_size,
-                "orderInEntry": idx,
-                "recordingDevice": "iPhone Microphone",
-                "creationDevice": "Miloš’s iPhone",
-                "audioChannels": "Mono",
-                "duration": duration,
-                "favorite": False,
-                "identifier": identifier,
-                "format": ext,
-                "date": creation_date_iso,
-                "height": 0,
-                "width": 0,
-                "md5": md5_hash,
-                "sampleRate": sample_rate,
-                "timeZoneName": "Europe/Belgrade"
+                "fileSize": size,"orderInEntry": idx,
+                "recordingDevice":"MacBook Microphone","creationDevice":"Miloš’s MacBook Pro",
+                "audioChannels":"Mono","duration":duration,"favorite":False,
+                "identifier":identifier,"format":ext,"date":creation_iso,
+                "height":0,"width":0,"md5":md5_hash,"sampleRate":sample_rate,
+                "timeZoneName":"Europe/Belgrade"
             }
-
-            if location:
-                audio_entry["location"] = location
-
+            if location: audio_entry["location"]=location
+            if duration: audio_entry["duration"]=duration
+            if sample_rate: audio_entry["sampleRate"]=sample_rate
             audio_entries.append(audio_entry)
 
     return photo_entries, audio_entries
@@ -191,14 +202,13 @@ def journey_to_dayone_entry(j, media_dir):
     location = convert_location(j)
     weather = convert_weather(j)
     text = convert_text(j)
-    rich_text = convert_rich_text(j)
 
     entry = {
         "uuid": uuid_str,
         "creationDate": created,
         "modifiedDate": modified,
         "text": text,
-        "richText": rich_text,
+        "richText": "",
         "starred": j.get("favourite", False),
         "creationDevice": "Miloš’s MacBook Pro",
         "creationDeviceType": "MacBook Pro",
@@ -222,6 +232,10 @@ def journey_to_dayone_entry(j, media_dir):
         entry["photos"] = photo_entries
     if audio_entries:
         entry["audios"] = audio_entries
+
+    rich_str, full_text = build_rich_text_and_text(text, photo_entries, audio_entries)
+    entry["richText"] = rich_str
+    entry["text"]     = full_text
 
     return entry
 
